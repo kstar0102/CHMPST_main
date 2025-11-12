@@ -1,0 +1,38 @@
+# Resolve react_native_pods.rb with node to allow for hoisting
+require Pod::Executable.execute_command('node', ['-p',
+  'require.resolve(
+    "react-native/scripts/react_native_pods.rb",
+    {paths: [process.argv[1]]},
+  )', __dir__]).strip
+
+platform :ios, min_ios_version_supported
+prepare_react_native_project!
+
+target 'CHMPST' do
+  config = use_native_modules!
+
+  # Prefer static frameworks for RN pods
+  use_frameworks! :linkage => :static
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+end
+
+post_install do |installer|
+  # RN post-install (handle both signatures across RN versions)
+  if method(:react_native_post_install).arity.abs >= 2
+    react_native_post_install(installer, :mac_catalyst_enabled => false)
+  else
+    react_native_post_install(installer, nil, :mac_catalyst_enabled => false)
+  end
+
+  # Apply build settings to all Pod targets
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |cfg|
+      cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] ||= '13.0'
+    end
+  end
+end
+
