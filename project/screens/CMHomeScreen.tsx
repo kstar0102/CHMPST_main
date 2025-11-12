@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   SafeAreaView,
   View,
@@ -8,6 +8,7 @@ import {
   TextInput,
   Keyboard,
   FlatList,
+  TouchableOpacity,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -63,16 +64,7 @@ interface TopPlayer {
   averageSteals: number;
   averageBlocks: number;
   averageTurnovers: number;
-  player?: {
-    id: string;
-    name: string;
-    number: number;
-    position: string;
-    avatar?: string;
-    teamId?: string;
-    height?: number;
-    weight?: number;
-  };
+  player?: any; // Allow full player object with all fields including birthDate, etc.
   team?: {
     id: string;
     name: string;
@@ -103,12 +95,23 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
   const [latestScoresDisplayCount, setLatestScoresDisplayCount] = useState(LOAD_MORE_LIMIT);
   const [topPlayersDisplayCount, setTopPlayersDisplayCount] = useState(LOAD_MORE_LIMIT);
 
+  // Top Players timeframe filter
+  type TimeframeFilter = 'This Week' | 'This Month' | 'This Season';
+  const [selectedTimeframe, setSelectedTimeframe] = useState<TimeframeFilter>('This Season');
+  const [showTimeframeDropdown, setShowTimeframeDropdown] = useState(false);
+  const timeframeOptions: TimeframeFilter[] = ['This Week', 'This Month', 'This Season'];
+
 
   // Load top players data
   useEffect(() => {
     loadTopPlayers();
     loadLatestScores();
   }, []);
+
+  // Reload top players when timeframe changes
+  useEffect(() => {
+    loadTopPlayers();
+  }, [selectedTimeframe]);
 
   // Reload latest scores when screen comes into focus (e.g., after adding stats)
   useEffect(() => {
@@ -120,6 +123,33 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
 
     return unsubscribe;
   }, [navigation]);
+
+  // Filter latest scores based on search text
+  const filteredLatestScores = useMemo(() => {
+    if (!searchText.trim()) {
+      return latestScores;
+    }
+    const searchLower = searchText.toLowerCase();
+    return latestScores.filter(score => 
+      score.teamA?.toLowerCase().includes(searchLower) ||
+      score.teamB?.toLowerCase().includes(searchLower) ||
+      score.leagueName?.toLowerCase().includes(searchLower) ||
+      score.series?.toLowerCase().includes(searchLower)
+    );
+  }, [latestScores, searchText]);
+
+  // Filter top players based on search text
+  const filteredTopPlayers = useMemo(() => {
+    if (!searchText.trim()) {
+      return topPlayers;
+    }
+    const searchLower = searchText.toLowerCase();
+    return topPlayers.filter(player => 
+      player.player?.name?.toLowerCase().includes(searchLower) ||
+      player.team?.name?.toLowerCase().includes(searchLower) ||
+      player.league?.name?.toLowerCase().includes(searchLower)
+    );
+  }, [topPlayers, searchText]);
 
   // Function to get latest match with top player data for a league using Firebase helper
   const getLatestMatchWithTopPlayer = (leagueId: string): Promise<any> => {
@@ -241,114 +271,307 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
   };
 
 
+  // Helper function to get date range based on timeframe
+  const getDateRangeForTimeframe = (timeframe: TimeframeFilter): { startDate: Date; endDate: Date } | null => {
+    const now = new Date();
+    const endDate = now;
+    let startDate: Date;
+
+    switch (timeframe) {
+      case 'This Week':
+        // Get start of current week (Sunday)
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - now.getDay());
+        startDate.setHours(0, 0, 0, 0);
+        return { startDate, endDate };
+      
+      case 'This Month':
+        // Get start of current month
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        return { startDate, endDate };
+      
+      case 'This Season':
+        // No date filtering for season
+        return null;
+      
+      default:
+        return null;
+    }
+  };
+
   const loadTopPlayers = () => {
     setIsLoadingTopPlayers(true);
+    console.log('Loading top players with timeframe:', selectedTimeframe);
+
+    const dateRange = getDateRangeForTimeframe(selectedTimeframe);
+    console.log('Date range:', dateRange);
 
     // Step 1: Fetch all leagues
-    CMFirebaseHelper.getAllLeagues((leaguesResponse: any) => {
+    CMFirebaseHelper.getAllLeagues(async (leaguesResponse: any) => {
       if (leaguesResponse.isSuccess) {
         const leagues = leaguesResponse.value;
-        const topPlayers: TopPlayer[] = [];
-        let completedLeagues = 0;
-        const totalLeagues = leagues.length;
+        const allPlayerStats: any[] = [];
 
-        if (totalLeagues === 0) {
+        if (leagues.length === 0) {
           setTopPlayers([]);
           setIsLoadingTopPlayers(false);
           return;
         }
 
-        // Step 2-6: For each league, get top player based on most recently updated match (to mirror Latest Scores)
-        leagues.forEach((league: any) => {
-          const handleDone = () => {
-            completedLeagues++;
-            if (completedLeagues === totalLeagues) {
-              // Sort all top players by points
-              topPlayers.sort((a: TopPlayer, b: TopPlayer) => (b.averagePoints || 0) - (a.averagePoints || 0));
-              setTopPlayers(topPlayers);
-              setIsLoadingTopPlayers(false);
-            }
-          };
+        // For "This Week", we need to find best single game performance
+        if (selectedTimeframe === 'This Week') {
+          console.log('Loading This Week stats...');
+          // Query playerStats for all leagues
+          for (const league of leagues) {
+            try {
+              const statsSnapshot = await firestore()
+                .collection('playerStats')
+                .where('leagueId', '==', league.id)
+                .get();
+              
+              console.log(`League ${league.name}: Found ${statsSnapshot.size} player stats`);
+              
+              // Filter by date in memory and group by player
+              const playerBestGames = new Map<string, any>();
+              
+              statsSnapshot.forEach(doc => {
+                const stat = doc.data();
+                
+                // Filter by date if dateRange exists
+                if (dateRange && stat.dayTime) {
+                  const statDate = stat.dayTime.toDate();
+                  if (statDate < dateRange.startDate || statDate > dateRange.endDate) {
+                    return; // Skip this stat
+                  }
+                }
+                
+                const points = Number(stat.pointsPerGame) || 0;
+                const playerId = stat.playerId;
+                const uniqueKey = `${league.id}_${playerId}`;
 
-          // 1) Try to use latest match top scorer, same as Latest Scores section
-          CMFirebaseHelper.getLatestMatchByLeague(league.id, (latestMatchResp: any) => {
-            if (latestMatchResp.isSuccess && latestMatchResp.value && latestMatchResp.value.topPlayerFromMatch) {
-              const top = latestMatchResp.value.topPlayerFromMatch;
-              // Fetch full player + team so UI renders consistently
-              CMFirebaseHelper.getPlayerWithTeam(top.id, (playerResponse: any) => {
-                if (playerResponse.isSuccess) {
-                  const playerData = playerResponse.value;
-                  topPlayers.push({
-                    id: `${league.id}${top.id}`,
-                    playerId: top.id,
+                if (!playerBestGames.has(uniqueKey) || points > playerBestGames.get(uniqueKey).points) {
+                  playerBestGames.set(uniqueKey, {
+                    playerId,
                     leagueId: league.id,
-                    matches: 1,
-                    averagePoints: top.points || 0, // show match points as the metric
-                    averageAssists: 0,
-                    averageRebounds: 0,
-                    averageSteals: 0,
-                    averageBlocks: 0,
-                    averageTurnovers: 0,
-                    player: {
-                      id: playerData.id,
-                      name: playerData.name,
-                      number: playerData.number,
-                      position: playerData.position,
-                      avatar: playerData.avatar,
-                      teamId: playerData.teamId,
-                      height: playerData.height,
-                      weight: playerData.weight,
-                    },
-                    team: playerData.team,
+                    points,
+                    assists: Number(stat.assists) || 0,
+                    rebounds: Number(stat.rebounds) || 0,
+                    steals: Number(stat.steals) || 0,
+                    blocks: Number(stat.blocks) || 0,
+                    turnovers: Number(stat.turnovers) || 0,
                     league: league,
                   });
                 }
-                handleDone();
               });
-            } else {
-              // 2) Fallback to averages (existing behavior) if no latest top scorer exists
-              CMFirebaseHelper.getPlayerAverageStatsByLeague(league.id, (statsResponse: any) => {
-                if (statsResponse.isSuccess && Array.isArray(statsResponse.value) && statsResponse.value.length > 0) {
-                  const playerStats = statsResponse.value;
-                  const playersSortedByPoints = [...playerStats].sort((a: any, b: any) => (b.averagePoints || 0) - (a.averagePoints || 0));
-                  const topPlayerStat = playersSortedByPoints[0];
-                  CMFirebaseHelper.getPlayerWithTeam(topPlayerStat.playerId, (playerResponse: any) => {
-                    if (playerResponse.isSuccess) {
-                      const playerData = playerResponse.value;
-                      topPlayers.push({
-                        id: topPlayerStat.id || '',
-                        playerId: topPlayerStat.playerId || '',
-                        leagueId: topPlayerStat.leagueId || '',
-                        matches: topPlayerStat.matches || 0,
-                        averagePoints: topPlayerStat.averagePoints || 0,
-                        averageAssists: topPlayerStat.averageAssists || 0,
-                        averageRebounds: topPlayerStat.averageRebounds || 0,
-                        averageSteals: topPlayerStat.averageSteals || 0,
-                        averageBlocks: topPlayerStat.averageBlocks || 0,
-                        averageTurnovers: topPlayerStat.averageTurnovers || 0,
-                        player: {
-                          id: playerData.id,
-                          name: playerData.name,
-                          number: playerData.number,
-                          position: playerData.position,
-                          avatar: playerData.avatar,
-                          teamId: playerData.teamId,
-                          height: playerData.height,
-                          weight: playerData.weight,
-                        },
-                        team: playerData.team,
-                        league: league,
-                      });
-                    }
-                    handleDone();
-                  });
-                } else {
-                  handleDone();
-                }
+
+              console.log(`Filtered to ${playerBestGames.size} unique players for ${league.name}`);
+              allPlayerStats.push(...Array.from(playerBestGames.values()));
+            } catch (error) {
+              console.log('Error loading weekly stats for league:', league.name, error);
+            }
+          }
+
+          // Sort all players by points and get top 10
+          allPlayerStats.sort((a, b) => (b.points || 0) - (a.points || 0));
+          const top10 = allPlayerStats.slice(0, 10);
+          
+          console.log(`Total players: ${allPlayerStats.length}, showing top 10`);
+
+          // Get player details for top 10
+          const topPlayers: TopPlayer[] = [];
+          for (const stat of top10) {
+            const playerResponse = await new Promise<any>((resolve) => {
+              CMFirebaseHelper.getPlayerWithTeam(stat.playerId, resolve);
+            });
+
+            if (playerResponse.isSuccess) {
+              const playerData = playerResponse.value;
+              topPlayers.push({
+                id: `${stat.leagueId}${stat.playerId}`,
+                playerId: stat.playerId,
+                leagueId: stat.leagueId,
+                matches: 1,
+                averagePoints: stat.points,
+                averageAssists: stat.assists,
+                averageRebounds: stat.rebounds,
+                averageSteals: stat.steals,
+                averageBlocks: stat.blocks,
+                averageTurnovers: stat.turnovers,
+                player: playerData, // Pass entire player object with all fields
+                team: playerData.team,
+                league: stat.league,
               });
             }
-          });
-        });
+          }
+
+          setTopPlayers(topPlayers);
+          setIsLoadingTopPlayers(false);
+        } 
+        // For "This Month", calculate averages from playerStats within the month
+        else if (selectedTimeframe === 'This Month') {
+          console.log('Loading This Month stats...');
+          // Query playerStats for all leagues
+          for (const league of leagues) {
+            try {
+              const statsSnapshot = await firestore()
+                .collection('playerStats')
+                .where('leagueId', '==', league.id)
+                .get();
+              
+              console.log(`League ${league.name}: Found ${statsSnapshot.size} player stats`);
+              
+              // Filter by date in memory and group by player
+              const playerStatsMap = new Map<string, any[]>();
+              
+              statsSnapshot.forEach(doc => {
+                const stat = doc.data();
+                
+                // Filter by date if dateRange exists
+                if (dateRange && stat.dayTime) {
+                  const statDate = stat.dayTime.toDate();
+                  if (statDate < dateRange.startDate || statDate > dateRange.endDate) {
+                    return; // Skip this stat
+                  }
+                }
+                
+                const playerId = stat.playerId;
+                const uniqueKey = `${league.id}_${playerId}`;
+                
+                if (!playerStatsMap.has(uniqueKey)) {
+                  playerStatsMap.set(uniqueKey, []);
+                }
+                playerStatsMap.get(uniqueKey)?.push({ ...stat, league });
+              });
+
+              console.log(`Filtered to ${playerStatsMap.size} unique players for ${league.name}`);
+
+              // Calculate averages for each player
+              for (const [uniqueKey, stats] of playerStatsMap) {
+                const totalPoints = stats.reduce((sum, s) => sum + (Number(s.pointsPerGame) || 0), 0);
+                const totalAssists = stats.reduce((sum, s) => sum + (Number(s.assists) || 0), 0);
+                const totalRebounds = stats.reduce((sum, s) => sum + (Number(s.rebounds) || 0), 0);
+                const totalSteals = stats.reduce((sum, s) => sum + (Number(s.steals) || 0), 0);
+                const totalBlocks = stats.reduce((sum, s) => sum + (Number(s.blocks) || 0), 0);
+                const totalTurnovers = stats.reduce((sum, s) => sum + (Number(s.turnovers) || 0), 0);
+                const matchCount = stats.length;
+
+                allPlayerStats.push({
+                  playerId: stats[0].playerId,
+                  leagueId: league.id,
+                  matches: matchCount,
+                  points: totalPoints / matchCount,
+                  assists: totalAssists / matchCount,
+                  rebounds: totalRebounds / matchCount,
+                  steals: totalSteals / matchCount,
+                  blocks: totalBlocks / matchCount,
+                  turnovers: totalTurnovers / matchCount,
+                  league: stats[0].league,
+                });
+              }
+            } catch (error) {
+              console.log('Error loading monthly stats for league:', league.name, error);
+            }
+          }
+
+          // Sort all players by points and get top 10
+          allPlayerStats.sort((a, b) => (b.points || 0) - (a.points || 0));
+          const top10 = allPlayerStats.slice(0, 10);
+          
+          console.log(`Total players: ${allPlayerStats.length}, showing top 10`);
+
+          // Get player details for top 10
+          const topPlayers: TopPlayer[] = [];
+          for (const stat of top10) {
+            const playerResponse = await new Promise<any>((resolve) => {
+              CMFirebaseHelper.getPlayerWithTeam(stat.playerId, resolve);
+            });
+
+            if (playerResponse.isSuccess) {
+              const playerData = playerResponse.value;
+              topPlayers.push({
+                id: `${stat.leagueId}${stat.playerId}`,
+                playerId: stat.playerId,
+                leagueId: stat.leagueId,
+                matches: stat.matches,
+                averagePoints: stat.points,
+                averageAssists: stat.assists,
+                averageRebounds: stat.rebounds,
+                averageSteals: stat.steals,
+                averageBlocks: stat.blocks,
+                averageTurnovers: stat.turnovers,
+                player: playerData, // Pass entire player object with all fields
+                team: playerData.team,
+                league: stat.league,
+              });
+            }
+          }
+
+          setTopPlayers(topPlayers);
+          setIsLoadingTopPlayers(false);
+        }
+        // For "This Season", use existing playerAverageStats
+        else {
+          console.log('Loading This Season stats...');
+          for (const league of leagues) {
+            try {
+              const statsResponse = await new Promise<any>((resolve) => {
+                CMFirebaseHelper.getPlayerAverageStatsByLeague(league.id, resolve);
+              });
+
+              if (statsResponse.isSuccess && Array.isArray(statsResponse.value) && statsResponse.value.length > 0) {
+                const playerStats = statsResponse.value;
+                
+                // Add all players from this league with league info
+                for (const stat of playerStats) {
+                  allPlayerStats.push({
+                    ...stat,
+                    league: league,
+                    points: stat.averagePoints,
+                  });
+                }
+              }
+            } catch (error) {
+              console.log('Error loading season stats for league:', league.name, error);
+            }
+          }
+
+          // Sort all players by points and get top 10
+          allPlayerStats.sort((a, b) => (b.points || 0) - (a.points || 0));
+          const top10 = allPlayerStats.slice(0, 10);
+          
+          console.log(`Total players: ${allPlayerStats.length}, showing top 10`);
+
+          // Get player details for top 10
+          const topPlayers: TopPlayer[] = [];
+          for (const stat of top10) {
+            const playerResponse = await new Promise<any>((resolve) => {
+              CMFirebaseHelper.getPlayerWithTeam(stat.playerId, resolve);
+            });
+
+            if (playerResponse.isSuccess) {
+              const playerData = playerResponse.value;
+              topPlayers.push({
+                id: stat.id || `${stat.leagueId}${stat.playerId}`,
+                playerId: stat.playerId || '',
+                leagueId: stat.leagueId || '',
+                matches: stat.matches || 0,
+                averagePoints: stat.averagePoints || 0,
+                averageAssists: stat.averageAssists || 0,
+                averageRebounds: stat.averageRebounds || 0,
+                averageSteals: stat.averageSteals || 0,
+                averageBlocks: stat.averageBlocks || 0,
+                averageTurnovers: stat.averageTurnovers || 0,
+                player: playerData, // Pass entire player object with all fields
+                team: playerData.team,
+                league: stat.league,
+              });
+            }
+          }
+
+          setTopPlayers(topPlayers);
+          setIsLoadingTopPlayers(false);
+        }
       } else {
         setTopPlayers([]);
         setIsLoadingTopPlayers(false);
@@ -502,7 +725,7 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
                 paddingHorizontal: CMConstants.space.small,
                 flex: 1,
               }}
-              defaultValue={searchText}
+              value={searchText}
               onChangeText={text => setSearchText(text)}
               placeholder="Search"
               placeholderTextColor={CMConstants.color.grey}
@@ -511,6 +734,7 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
               blurOnSubmit={false}
               underlineColorAndroid="#f000"
               returnKeyType="done"
+              autoFocus={true}
             />
             <CMRipple
               containerStyle={{
@@ -521,7 +745,9 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
                 right: CMConstants.space.smallEx,
               }}
               onPress={() => {
+                setSearchText('');
                 setIsSearching(false);
+                Keyboard.dismiss();
               }}
             >
               <Ionicons
@@ -537,6 +763,12 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
       <ScrollView
         style={{ flex: 1, marginHorizontal: 15 }}
         showsVerticalScrollIndicator={false}
+        onScroll={() => {
+          if (showTimeframeDropdown) {
+            setShowTimeframeDropdown(false);
+          }
+        }}
+        scrollEventThrottle={16}
       >
         {/* Latest Scores Section */}
         <View style={styles.section}>
@@ -556,30 +788,41 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
             <View style={styles.loadingContainer}>
               <Text style={styles.loadingText}>Loading latest scores...</Text>
             </View>
-          ) : latestScores.length > 0 ? (
+          ) : filteredLatestScores.length > 0 ? (
             <>
               <FlatList
-                data={latestScores.slice(0, latestScoresDisplayCount)}
+                data={filteredLatestScores.slice(0, latestScoresDisplayCount)}
                 renderItem={renderLatestScoreItem}
                 keyExtractor={(item) => item.id}
                 scrollEnabled={false}
                 contentContainerStyle={{ width: '100%' }}
                 ItemSeparatorComponent={() => <View style={{ height: 2 }} />}
               />
-              {latestScores.length > latestScoresDisplayCount && (
+              {filteredLatestScores.length > latestScoresDisplayCount ? (
                 <CMRipple
                   containerStyle={styles.showMoreButton}
                   onPress={() => {
-                    setLatestScoresDisplayCount(prev => Math.min(prev + LOAD_MORE_LIMIT, latestScores.length));
+                    setLatestScoresDisplayCount(prev => Math.min(prev + LOAD_MORE_LIMIT, filteredLatestScores.length));
                   }}
                 >
                   <Text style={styles.showMoreText}>Show More</Text>
                 </CMRipple>
-              )}
+              ) : latestScoresDisplayCount > LOAD_MORE_LIMIT ? (
+                <CMRipple
+                  containerStyle={styles.showMoreButton}
+                  onPress={() => {
+                    setLatestScoresDisplayCount(LOAD_MORE_LIMIT);
+                  }}
+                >
+                  <Text style={styles.showMoreText}>Show Less</Text>
+                </CMRipple>
+              ) : null}
             </>
           ) : (
             <View style={styles.loadingContainer}>
-              <Text style={styles.loadingText}>No latest scores available</Text>
+              <Text style={styles.loadingText}>
+                {searchText.trim() ? 'No results found' : 'No latest scores available'}
+              </Text>
             </View>
           )}
         </View>
@@ -588,14 +831,56 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Top Players</Text>
-            <CMRipple
-              containerStyle={styles.arrowButton}
-              onPress={() => {
-                navigation.navigate(CMConstants.screenName.players);
-              }}
-            >
+            
+            {/* Timeframe Dropdown */}
+            <View style={{ position: 'relative' }}>
+              <TouchableOpacity
+                style={styles.timeframeDropdown}
+                onPress={() => setShowTimeframeDropdown(!showTimeframeDropdown)}
+              >
+                <Text style={styles.timeframeDropdownText}>{selectedTimeframe}</Text>
+                <Ionicons
+                  name={showTimeframeDropdown ? "chevron-up" : "chevron-down"}
+                  size={16}
+                  color={CMConstants.color.denim}
+                  style={{ marginLeft: 4 }}
+                />
+              </TouchableOpacity>
 
-            </CMRipple>
+              {/* Dropdown Options */}
+              {showTimeframeDropdown && (
+                <View style={styles.dropdownMenu}>
+                  {timeframeOptions.map((option, index) => (
+                    <TouchableOpacity
+                      key={option}
+                      style={[
+                        styles.dropdownOption,
+                        selectedTimeframe === option && styles.dropdownOptionSelected,
+                        index === timeframeOptions.length - 1 && { borderBottomWidth: 0 }
+                      ]}
+                      onPress={() => {
+                        setSelectedTimeframe(option);
+                        setShowTimeframeDropdown(false);
+                      }}
+                    >
+                      <Text style={[
+                        styles.dropdownOptionText,
+                        selectedTimeframe === option && styles.dropdownOptionTextSelected
+                      ]}>
+                        {option}
+                      </Text>
+                      {selectedTimeframe === option && (
+                        <Ionicons
+                          name="checkmark"
+                          size={18}
+                          color={CMConstants.color.denim}
+                        />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
           </View>
 
           {/* Top Players List - Similar to CMPlayerStatCell */}
@@ -604,9 +889,9 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
               <View style={styles.loadingContainer}>
                 <Text style={styles.loadingText}>Loading top players...</Text>
               </View>
-            ) : topPlayers.length > 0 ? (
+            ) : filteredTopPlayers.length > 0 ? (
               <>
-                {topPlayers.slice(0, topPlayersDisplayCount).map((player, index) => (
+                {filteredTopPlayers.slice(0, topPlayersDisplayCount).map((player, index) => (
                   <View key={player.id} style={{ marginBottom: CMConstants.space.smallEx }}>
                     <CMRipple
                       containerStyle={[styles.topPlayerScoreRow, { paddingVertical: 10, alignItems: 'center' }]}
@@ -698,20 +983,31 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
                     </CMRipple>
                   </View>
                 ))}
-                {topPlayers.length > topPlayersDisplayCount && (
+                {filteredTopPlayers.length > topPlayersDisplayCount ? (
                   <CMRipple
                     containerStyle={styles.showMoreButton}
                     onPress={() => {
-                      setTopPlayersDisplayCount(prev => Math.min(prev + LOAD_MORE_LIMIT, topPlayers.length));
+                      setTopPlayersDisplayCount(prev => Math.min(prev + LOAD_MORE_LIMIT, filteredTopPlayers.length));
                     }}
                   >
                     <Text style={styles.showMoreText}>Show More</Text>
                   </CMRipple>
-                )}
+                ) : topPlayersDisplayCount > LOAD_MORE_LIMIT ? (
+                  <CMRipple
+                    containerStyle={styles.showMoreButton}
+                    onPress={() => {
+                      setTopPlayersDisplayCount(LOAD_MORE_LIMIT);
+                    }}
+                  >
+                    <Text style={styles.showMoreText}>Show Less</Text>
+                  </CMRipple>
+                ) : null}
               </>
             ) : (
               <View style={styles.noDataContainer}>
-                <Text style={styles.noDataText}>No top players found</Text>
+                <Text style={styles.noDataText}>
+                  {searchText.trim() ? 'No results found' : 'No top players found'}
+                </Text>
               </View>
             )}
           </View>
@@ -1100,6 +1396,58 @@ const styles = {
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+  },
+  timeframeDropdown: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: CMConstants.color.lightGrey2,
+    borderRadius: CMConstants.radius.small,
+    borderWidth: 1,
+    borderColor: CMConstants.color.lightGrey,
+  },
+  timeframeDropdownText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: CMConstants.color.denim,
+  },
+  dropdownMenu: {
+    position: 'absolute' as const,
+    top: 40,
+    right: 0,
+    backgroundColor: CMConstants.color.white,
+    borderRadius: CMConstants.radius.small,
+    borderWidth: 1,
+    borderColor: CMConstants.color.lightGrey,
+    minWidth: 150,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 1000,
+  },
+  dropdownOption: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: CMConstants.color.lightGrey,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: CMConstants.color.lightGrey2,
+  },
+  dropdownOptionText: {
+    fontSize: 13,
+    color: CMConstants.color.black,
+    fontWeight: '500' as const,
+  },
+  dropdownOptionTextSelected: {
+    color: CMConstants.color.denim,
+    fontWeight: '600' as const,
   },
 };
 

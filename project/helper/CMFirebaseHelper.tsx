@@ -242,6 +242,113 @@ export default {
       });
   },
 
+  
+  getLastThreeGamesStats: (playerId: string, callback: Function) => {
+    firestore()
+      .collection('playerStats')
+      .where('playerId', '==', playerId)
+      .orderBy('dayTime', 'desc')
+      .limit(3)
+      .get()
+      .then(querySnapshot => {
+        const games: { [name: string]: any }[] = [];
+        querySnapshot.forEach(documentSnapshot => {
+          games.push(documentSnapshot.data());
+        });
+        callback({ isSuccess: true, value: games });
+      })
+      .catch(error => {
+        // If orderBy fails, try without it and sort manually
+        firestore()
+          .collection('playerStats')
+          .where('playerId', '==', playerId)
+          .get()
+          .then(querySnapshot => {
+            const games: { [name: string]: any }[] = [];
+            querySnapshot.forEach(documentSnapshot => {
+              games.push(documentSnapshot.data());
+            });
+            // Sort by dayTime descending
+            games.sort((a, b) => {
+              const dateA = a.dayTime?.toDate?.() || new Date(0);
+              const dateB = b.dayTime?.toDate?.() || new Date(0);
+              return dateB.getTime() - dateA.getTime();
+            });
+            callback({ isSuccess: true, value: games.slice(0, 3) });
+          })
+          .catch(error2 => {
+            callback({
+              isSuccess: false,
+              value: 'Failed to load last games stats.',
+            });
+          });
+      });
+  },
+
+  getPlayerSeasonStats: (playerId: string, callback: Function) => {
+    firestore()
+      .collection('playerStats')
+      .where('playerId', '==', playerId)
+      .get()
+      .then(querySnapshot => {
+        let totalPoints = 0;
+        let totalAssists = 0;
+        let totalRebounds = 0;
+        let totalBlocks = 0;
+        let totalSteals = 0;
+        let totalTurnovers = 0;
+        let gameCount = 0;
+
+        querySnapshot.forEach(documentSnapshot => {
+          const stat = documentSnapshot.data();
+          totalPoints += stat.pointsPerGame || stat.points || 0;
+          totalAssists += stat.assists || 0;
+          totalRebounds += stat.rebounds || 0;
+          totalBlocks += stat.blocks || 0;
+          totalSteals += stat.steals || 0;
+          totalTurnovers += stat.turnovers || 0;
+          gameCount += 1;
+        });
+
+        const seasonStats = {
+          points: totalPoints,
+          assists: totalAssists,
+          rebounds: totalRebounds,
+          blocks: totalBlocks,
+          steals: totalSteals,
+          turnovers: totalTurnovers,
+          gamesPlayed: gameCount,
+          pointsPerGame: gameCount > 0 ? (totalPoints / gameCount).toFixed(1) : 0,
+          assistsPerGame: gameCount > 0 ? (totalAssists / gameCount).toFixed(1) : 0,
+          reboundsPerGame: gameCount > 0 ? (totalRebounds / gameCount).toFixed(1) : 0,
+        };
+
+        callback({ isSuccess: true, value: seasonStats });
+      })
+      .catch(error => {
+        callback({ isSuccess: false, value: 'Failed to load season stats.' });
+      });
+  },
+
+  
+  getMatch: (matchId: string, callback: Function) => {
+    firestore()
+      .collection('matches')
+      .doc(matchId)
+      .get()
+      .then(documentSnapshot => {
+        if (documentSnapshot.exists()) {
+          callback({ isSuccess: true, value: documentSnapshot.data() });
+        } else {
+          callback({ isSuccess: false, value: 'Match not found.' });
+        }
+      })
+      .catch(error => {
+        callback({ isSuccess: false, value: 'Failed to load match.' });
+      });
+  },
+
+
   getNewDocumentId: (collectionName: string) => {
     return firestore().collection(collectionName).doc().id;
   },
