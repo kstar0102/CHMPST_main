@@ -19,6 +19,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import CMImagePicker from '../helper/CMImagePicker';
 import CMImageView from '../components/CMImageView';
 import CMProfileImage from '../components/CMProfileImage';
+import CMPermissionHelper from '../helper/CMPermissionHelper';
 
 const CMEditMatchScreen = ({ navigation, route }: CMNavigationProps) => {
   const [loading, setLoading] = useState(false);
@@ -74,6 +75,18 @@ const CMEditMatchScreen = ({ navigation, route }: CMNavigationProps) => {
   useEffect(() => {
     if (!route.params.isEdit) {
       navigation.setOptions({ title: 'Create Match' });
+    } else {
+      // Check permissions when editing
+      const checkPermissions = async () => {
+        const match = route.params.match;
+        if (match && match.id) {
+          const canEdit = await CMPermissionHelper.canEditMatch(match.id, match);
+          if (!canEdit) {
+            CMPermissionHelper.showPermissionDenied(navigation);
+          }
+        }
+      };
+      checkPermissions();
     }
 
     // Header button to open Match Player Stats (only when editing an existing match)
@@ -150,7 +163,7 @@ const CMEditMatchScreen = ({ navigation, route }: CMNavigationProps) => {
     return selectedLeagueData.avatar || null;
   };
 
-  const onBtnCreateMatch = () => {
+  const onBtnCreateMatch = async () => {
     if (name.trim().length === 0) {
       CMAlertDlgHelper.showAlertWithOK('Please enter match name.');
       return;
@@ -218,6 +231,16 @@ const CMEditMatchScreen = ({ navigation, route }: CMNavigationProps) => {
       createdAt: route.params.isEdit ? route.params.match.createdAt : new Date(),
       updatedAt: new Date(),
     };
+
+    // Check permissions before updating
+    if (route.params.isEdit) {
+      const canEdit = await CMPermissionHelper.canEditMatch(matchId, route.params.match);
+      if (!canEdit) {
+        setLoading(false);
+        CMPermissionHelper.showPermissionDenied(navigation);
+        return;
+      }
+    }
 
     setLoading(true);
     CMFirebaseHelper.setMatch(

@@ -22,6 +22,7 @@ import CMMatchPlayersStatsScreen from '../screens/CMMatchPlayersStatsScreen';
 import CMScoreboardScreen from '../screens/CMScoreboardScreen';
 import CMTeamManagementScreen from '../screens/CMTeamManagement';
 import CMTeamManagementTabScreen from '../screens/CMTeamManagementTabScreen';
+import CMAllTopPlayersScreen from '../screens/CMAllTopPlayersScreen';
 
 const Stack = createStackNavigator();
 
@@ -131,6 +132,16 @@ const CMCoachStackNavigatorRoutes = (props: any) => {
         options={{
           ...CMNavigationStyle.header(themeMode),
           title: 'Player Details',
+          headerBackTitle: '',
+          headerShown: true,
+        }}
+      />
+      <Stack.Screen
+        name="AllTopPlayers"
+        component={CMAllTopPlayersScreen}
+        options={{
+          ...CMNavigationStyle.header(themeMode),
+          title: 'All Top Players',
           headerBackTitle: '',
           headerShown: true,
         }}

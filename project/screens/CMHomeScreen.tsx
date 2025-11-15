@@ -983,25 +983,40 @@ const CMHomeScreen = ({ navigation, route }: CMNavigationProps) => {
                     </CMRipple>
                   </View>
                 ))}
-                {filteredTopPlayers.length > topPlayersDisplayCount ? (
-                  <CMRipple
-                    containerStyle={styles.showMoreButton}
-                    onPress={() => {
-                      setTopPlayersDisplayCount(prev => Math.min(prev + LOAD_MORE_LIMIT, filteredTopPlayers.length));
-                    }}
-                  >
-                    <Text style={styles.showMoreText}>Show More</Text>
-                  </CMRipple>
-                ) : topPlayersDisplayCount > LOAD_MORE_LIMIT ? (
-                  <CMRipple
-                    containerStyle={styles.showMoreButton}
-                    onPress={() => {
-                      setTopPlayersDisplayCount(LOAD_MORE_LIMIT);
-                    }}
-                  >
-                    <Text style={styles.showMoreText}>Show Less</Text>
-                  </CMRipple>
-                ) : null}
+                <View style={styles.showButtonsContainer}>
+                  {filteredTopPlayers.length > 0 && (
+                    <CMRipple
+                      containerStyle={styles.showAllButton}
+                      onPress={() => {
+                        navigation.navigate('AllTopPlayers', {
+                          players: filteredTopPlayers,
+                          timeframe: selectedTimeframe,
+                        });
+                      }}
+                    >
+                      <Text style={styles.showAllText}>Show All</Text>
+                    </CMRipple>
+                  )}
+                  {filteredTopPlayers.length > topPlayersDisplayCount ? (
+                    <CMRipple
+                      containerStyle={styles.showMoreButton}
+                      onPress={() => {
+                        setTopPlayersDisplayCount(prev => Math.min(prev + LOAD_MORE_LIMIT, filteredTopPlayers.length));
+                      }}
+                    >
+                      <Text style={styles.showMoreText}>Show More</Text>
+                    </CMRipple>
+                  ) : topPlayersDisplayCount > LOAD_MORE_LIMIT ? (
+                    <CMRipple
+                      containerStyle={styles.showMoreButton}
+                      onPress={() => {
+                        setTopPlayersDisplayCount(LOAD_MORE_LIMIT);
+                      }}
+                    >
+                      <Text style={styles.showMoreText}>Show Less</Text>
+                    </CMRipple>
+                  ) : null}
+                </View>
               </>
             ) : (
               <View style={styles.noDataContainer}>
@@ -1345,6 +1360,21 @@ const styles = {
   loadingText: {
     fontSize: 14,
     color: CMConstants.color.grey,
+  },
+  showButtonsContainer: {
+    flexDirection: 'row' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
+    paddingVertical: 5,
+  },
+  showAllButton: {
+    paddingVertical: 5,
+  },
+  showAllText: {
+    fontSize: 14,
+    fontWeight: '500' as const,
+    color: CMConstants.color.denim,
+    textDecorationLine: 'underline' as const,
   },
   showMoreButton: {
     alignSelf: 'flex-end' as const,

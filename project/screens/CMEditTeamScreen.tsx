@@ -14,6 +14,7 @@ import CMAlertDlgHelper from '../helper/CMAlertDlgHelper'
 import CMProgressiveImage from '../components/CMProgressiveImage'
 import { getAuth } from '@react-native-firebase/auth'
 import CMGlobal from '../CMGlobal'
+import CMPermissionHelper from '../helper/CMPermissionHelper'
 
 const CMEditTeamScreen = ({navigation, route}: CMNavigationProps) => {
 	const [loading, setLoading] = useState(false)
@@ -32,6 +33,17 @@ const CMEditTeamScreen = ({navigation, route}: CMNavigationProps) => {
 		navigation.setOptions({ 
 			title: isEdit ? 'Edit Team' : 'Add Team' 
 		});
+		
+		// Check permissions when editing
+		if (isEdit && team?.id) {
+			const checkPermissions = async () => {
+				const canEdit = await CMPermissionHelper.canEditTeam(team.id, team);
+				if (!canEdit) {
+					CMPermissionHelper.showPermissionDenied(navigation);
+				}
+			};
+			checkPermissions();
+		}
 	}, [isEdit]);
 
 	const onBtnProfileImage = () => {
@@ -58,8 +70,16 @@ const CMEditTeamScreen = ({navigation, route}: CMNavigationProps) => {
 			coachId: getAuth().currentUser?.uid
 		}
 
-		const postUpdateTeam = () => {
+		const postUpdateTeam = async () => {
 			if (isEdit) {
+				// Check permissions before updating
+				const canEdit = await CMPermissionHelper.canEditTeam(teamId, team);
+				if (!canEdit) {
+					setLoading(false);
+					CMPermissionHelper.showPermissionDenied(navigation);
+					return;
+				}
+
 				CMFirebaseHelper.updateTeam(teamId, updatedTeam, (response: {[name: string]: any}) => {
 					setLoading(false)
 					setProfileImageChanged(false)

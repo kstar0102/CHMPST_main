@@ -19,6 +19,7 @@ import CMActivityCell from '../components/CMActivityCell';
 import CMRipple from '../components/CMRipple';
 import CMUtils from '../utils/CMUtils';
 import CMLoadingDialog from '../dialog/CMLoadingDialog';
+import CMPermissionHelper from '../helper/CMPermissionHelper';
 
 interface CMGenericFeedScreenProps extends CMNavigationProps {
   // Customizable properties
@@ -52,6 +53,7 @@ const CMGenericFeedScreen = ({
 
   const [items, setItems] = useState<{ [name: string]: any }[]>([]);
   const [filteredItems, setFilteredItems] = useState<{ [name: string]: any }[]>([]);
+  const [matchPermissions, setMatchPermissions] = useState<{ [matchId: string]: boolean }>({});
 
   const themeMode = CMConstants.themeMode.light;
 
@@ -156,16 +158,16 @@ const CMGenericFeedScreen = ({
   };
 
   const loadActivities = async (items: { [name: string]: any }[]) => {
-    const loadMatches = () => {
+    const loadMatches = async () => {
       CMFirebaseHelper.getLeagues(
-        (response: { [name: string]: any }) => {
+        async (response: { [name: string]: any }) => {
           if (response.isSuccess) {
             let leagueIds = response.value.map(
               (league: { [name: string]: any }) => league.id,
             );
             CMFirebaseHelper.getMatchesOfLeagues(
               leagueIds,
-              (response: { [name: string]: any }) => {
+              async (response: { [name: string]: any }) => {
                 setRefreshing(false);
                 setLoading(false);
                 if (response.isSuccess) {
@@ -175,6 +177,15 @@ const CMGenericFeedScreen = ({
                       data: item,
                     });
                   });
+                  
+                  // Check permissions for all matches
+                  const permissions: { [matchId: string]: boolean } = {};
+                  for (const match of response.value) {
+                    if (match.id) {
+                      permissions[match.id] = await CMPermissionHelper.canEditMatch(match.id, match);
+                    }
+                  }
+                  setMatchPermissions(prev => ({ ...prev, ...permissions }));
                 }
                 sortAndSetItems(items);
               },
@@ -207,14 +218,14 @@ const CMGenericFeedScreen = ({
   const loadMatches = async (items: { [name: string]: any }[]) => {
     setRefreshing(true);
     CMFirebaseHelper.getLeagues(
-      (response: { [name: string]: any }) => {
+      async (response: { [name: string]: any }) => {
         if (response.isSuccess) {
           let leagueIds = response.value.map(
             (league: { [name: string]: any }) => league.id,
           );
           CMFirebaseHelper.getMatchesOfLeagues(
             leagueIds,
-            (response: { [name: string]: any }) => {
+            async (response: { [name: string]: any }) => {
               setRefreshing(false);
               setLoading(false);
               if (response.isSuccess) {
@@ -224,6 +235,15 @@ const CMGenericFeedScreen = ({
                     data: item,
                   });
                 });
+                
+                // Check permissions for all matches
+                const permissions: { [matchId: string]: boolean } = {};
+                for (const match of response.value) {
+                  if (match.id) {
+                    permissions[match.id] = await CMPermissionHelper.canEditMatch(match.id, match);
+                  }
+                }
+                setMatchPermissions(permissions);
               }
               sortAndSetItems(items);
             },
@@ -389,34 +409,39 @@ const CMGenericFeedScreen = ({
 
     // Use CMActivityCell with edit/delete actions for matches
     if (routeDataSource === 'matches') {
+      const matchId = item.data?.id || item.id;
+      const canEdit = matchPermissions[matchId] ?? false;
+      
       return (
         <View style={styles.matchItemContainer}>
           <CMActivityCell
             activity={item}
             onPress={() => handleItemPress(item)}
           />
-          <View style={styles.actionButtons}>
-            <CMRipple
-              containerStyle={styles.actionButton}
-              onPress={() => handleEditMatch(item)}
-            >
-              <Ionicons
-                name={'create-outline'}
-                size={16}
-                color={CMConstants.color.white}
-              />
-            </CMRipple>
-            <CMRipple
-              containerStyle={styles.actionButton}
-              onPress={() => handleDeleteMatch(item)}
-            >
-              <Ionicons
-                name={'trash-outline'}
-                size={16}
-                color={CMConstants.color.white}
-              />
-            </CMRipple>
-          </View>
+          {canEdit && (
+            <View style={styles.actionButtons}>
+              <CMRipple
+                containerStyle={styles.actionButton}
+                onPress={() => handleEditMatch(item)}
+              >
+                <Ionicons
+                  name={'create-outline'}
+                  size={16}
+                  color={CMConstants.color.white}
+                />
+              </CMRipple>
+              <CMRipple
+                containerStyle={styles.actionButton}
+                onPress={() => handleDeleteMatch(item)}
+              >
+                <Ionicons
+                  name={'trash-outline'}
+                  size={16}
+                  color={CMConstants.color.white}
+                />
+              </CMRipple>
+            </View>
+          )}
         </View>
       );
     }

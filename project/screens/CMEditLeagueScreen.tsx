@@ -16,6 +16,7 @@ import CMUtils from '../utils/CMUtils';
 import { getAuth } from '@react-native-firebase/auth';
 import CMGlobal from '../CMGlobal';
 import CMProgressiveImage from '../components/CMProgressiveImage';
+import CMPermissionHelper from '../helper/CMPermissionHelper';
 
 const CMEditLeagueScreen = ({ navigation, route }: CMNavigationProps) => {
   const [loading, setLoading] = useState(false);
@@ -87,6 +88,18 @@ const CMEditLeagueScreen = ({ navigation, route }: CMNavigationProps) => {
     if (route.params.isEdit) {
       navigation.setOptions({ title: 'Edit League' });
       setCreateLabel('Update League');
+      
+      // Check permissions when editing
+      const checkPermissions = async () => {
+        const league = route.params.league;
+        if (league && league.id) {
+          const canEdit = await CMPermissionHelper.canEditLeague(league.id, league);
+          if (!canEdit) {
+            CMPermissionHelper.showPermissionDenied(navigation);
+          }
+        }
+      };
+      checkPermissions();
     } else {
       navigation.setOptions({ title: 'Create League' });
     }
@@ -156,8 +169,16 @@ const CMEditLeagueScreen = ({ navigation, route }: CMNavigationProps) => {
       updatedLeague.teamsId = [CMGlobal.user.teamId];
     }
 
-    const postUploadImage = () => {
+    const postUploadImage = async () => {
       if (isEdit) {
+        // Check permissions before updating
+        const canEdit = await CMPermissionHelper.canEditLeague(leagueId, route.params.league);
+        if (!canEdit) {
+          setLoading(false);
+          CMPermissionHelper.showPermissionDenied(navigation);
+          return;
+        }
+
         CMFirebaseHelper.updateLeague(
           leagueId,
           updatedLeague,

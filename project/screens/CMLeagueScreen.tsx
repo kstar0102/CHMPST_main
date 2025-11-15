@@ -14,6 +14,8 @@ import CMLeagueCell from '../components/CMLeagueCell'
 import CMFirebaseHelper from '../helper/CMFirebaseHelper'
 import CMLoadingDialog from '../dialog/CMLoadingDialog'
 import CMUtils from '../utils/CMUtils'
+import CMPermissionHelper from '../helper/CMPermissionHelper'
+import { getAuth } from '@react-native-firebase/auth'
 
 const CMLeagueScreen = ({navigation, route}: CMNavigationProps) => {
 	const [loading, setLoading] = useState(false)
@@ -27,18 +29,41 @@ const CMLeagueScreen = ({navigation, route}: CMNavigationProps) => {
 
 	const themeMode = CMConstants.themeMode.light
 
-	const loadLeagues = () => {
+	const loadLeagues = async () => {
 		setRefreshing(true)
 		// Show loading dialog for initial load (not for refresh)
 		if (!refreshing) {
 			setLoading(true)
 		}
-		CMFirebaseHelper.getLeagues((response: {[name: string]: any}) => {
-			setRefreshing(false)
-			setLoading(false)
+		CMFirebaseHelper.getLeagues(async (response: {[name: string]: any}) => {
 			if (response.isSuccess) {
-				setIsNoLeague(response.value.length == 0)
-				setLeagues(response.value)
+				let filteredLeagues = response.value;
+				
+				// Filter leagues based on permissions
+				// Admin users can see all leagues
+				// Coach users can only see leagues they created
+				if (CMGlobal.user?.role !== 'admin') {
+					const currentUser = getAuth().currentUser;
+					if (currentUser) {
+						// Filter to only show leagues where user is admin
+						filteredLeagues = response.value.filter((league: any) => {
+							return league.adminId === currentUser.uid;
+						});
+					} else {
+						// If not authenticated, show no leagues
+						filteredLeagues = [];
+					}
+				}
+				
+				setRefreshing(false)
+				setLoading(false)
+				setIsNoLeague(filteredLeagues.length == 0)
+				setLeagues(filteredLeagues)
+			} else {
+				setRefreshing(false)
+				setLoading(false)
+				setIsNoLeague(true)
+				setLeagues([])
 			}
 		})
 	}
@@ -61,7 +86,14 @@ const CMLeagueScreen = ({navigation, route}: CMNavigationProps) => {
 		navigation.navigate(CMConstants.screenName.editLeague, {isEdit: true, league: league})
 	}
 
-	const onDeleteLeague = (league: any) => {
+	const onDeleteLeague = async (league: any) => {
+		// Check permissions before allowing delete
+		const canEdit = await CMPermissionHelper.canEditLeague(league.id, league);
+		if (!canEdit) {
+			CMPermissionHelper.showPermissionDenied();
+			return;
+		}
+
 		CMAlertDlgHelper.showConfirmAlert(
 			'Delete League',
 			`Are you sure you want to delete "${league.name}"? This will permanently delete the league and ALL associated data. This action cannot be undone.`,

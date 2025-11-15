@@ -17,6 +17,7 @@ import CMFirebaseHelper from '../helper/CMFirebaseHelper'
 import CMAlertDlgHelper from '../helper/CMAlertDlgHelper'
 import CMProgressiveImage from '../components/CMProgressiveImage'
 import CMDropDownPicker from '../components/CMDropDownPicker'
+import CMPermissionHelper from '../helper/CMPermissionHelper'
 
 const CMEditPlayerScreen = ({navigation, route}: CMNavigationProps) => {
 	const [loading, setLoading] = useState(false)
@@ -92,8 +93,16 @@ const CMEditPlayerScreen = ({navigation, route}: CMNavigationProps) => {
 
 		const playerId = isEdit ? route.params.player.id : CMFirebaseHelper.getNewDocumentId(CMConstants.collectionName.players)
 
-		const postUpdate = () => {
+		const postUpdate = async () => {
 			if (isEdit) {
+				// Check permissions before updating
+				const canEdit = await CMPermissionHelper.canEditPlayer(playerId, route.params.player);
+				if (!canEdit) {
+					setLoading(false);
+					CMPermissionHelper.showPermissionDenied(navigation);
+					return;
+				}
+
 				CMFirebaseHelper.updatePlayer(playerId, data, (response: {[name: string]: any}) => {
 					setLoading(false)
 					setProfileImageChanged(false)
@@ -126,7 +135,14 @@ const CMEditPlayerScreen = ({navigation, route}: CMNavigationProps) => {
 		}
 	}
 
-	const onBtnDelete = () => {
+	const onBtnDelete = async () => {
+		// Check permissions before allowing delete
+		const canEdit = await CMPermissionHelper.canEditPlayer(route.params.player.id, route.params.player);
+		if (!canEdit) {
+			CMPermissionHelper.showPermissionDenied(navigation);
+			return;
+		}
+
 		CMAlertDlgHelper.showConfirmAlert(CMConstants.appName, `Are you sure you want to delete ${route.params.player.name}?`, (isYes: boolean) => {
 			if (isYes) {
 				setLoading(true)
@@ -144,6 +160,17 @@ const CMEditPlayerScreen = ({navigation, route}: CMNavigationProps) => {
 
 	useEffect(() => {
 		navigation.setOptions({title: isEdit ? 'Edit Player' : 'Add New Player'})
+		
+		// Check permissions when editing
+		if (isEdit && route.params.player?.id) {
+			const checkPermissions = async () => {
+				const canEdit = await CMPermissionHelper.canEditPlayer(route.params.player.id, route.params.player);
+				if (!canEdit) {
+					CMPermissionHelper.showPermissionDenied(navigation);
+				}
+			};
+			checkPermissions();
+		}
 	}, [])
 
 	return (

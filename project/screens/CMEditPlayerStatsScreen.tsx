@@ -15,6 +15,7 @@ import { Timestamp } from '@react-native-firebase/firestore'
 import CMFirebaseHelper from '../helper/CMFirebaseHelper'
 import CMAlertDlgHelper from '../helper/CMAlertDlgHelper'
 import CMDropDownPicker from '../components/CMDropDownPicker'
+import CMPermissionHelper from '../helper/CMPermissionHelper'
 
 const CMEditPlayerStatsScreen = ({navigation, route}: CMNavigationProps) => {
 	const [loading, setLoading] = useState(false)
@@ -44,7 +45,7 @@ const CMEditPlayerStatsScreen = ({navigation, route}: CMNavigationProps) => {
 
 	const themeMode = CMConstants.themeMode.light
 
-	const onBtnSave = () => {
+	const onBtnSave = async () => {
 		if (!playerId) {
 			CMAlertDlgHelper.showAlertWithOK('Please select player.')
 			return
@@ -56,6 +57,22 @@ const CMEditPlayerStatsScreen = ({navigation, route}: CMNavigationProps) => {
 		if (!matchId) {
 			CMAlertDlgHelper.showAlertWithOK('Please select match.')
 			return
+		}
+
+		// Check permissions before saving (for editing, check if user can edit the match)
+		if (isEdit && route.params.playerStat?.matchId) {
+			const canEdit = await CMPermissionHelper.canEditMatch(route.params.playerStat.matchId);
+			if (!canEdit) {
+				CMPermissionHelper.showPermissionDenied(navigation);
+				return;
+			}
+		} else if (!isEdit && matchId) {
+			// For new stats, check if user can edit the selected match
+			const canEdit = await CMPermissionHelper.canEditMatch(matchId);
+			if (!canEdit) {
+				CMPermissionHelper.showPermissionDenied(navigation);
+				return;
+			}
 		}
 		if (!CMUtils.isNumeric(parseFloat(pointsPerGame))) {
 			CMAlertDlgHelper.showAlertWithOK('Points per game should be numeric.')
